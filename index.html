@@ -102,24 +102,25 @@
 
     async function fetchWithTimeout(url) {
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 10000);
+      const id = setTimeout(function() { controller.abort(); }, 10000);
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(id);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error("HTTP " + res.status);
       return res.json();
     }
 
     async function fetchWeather() {
       try {
-        // 1. Get NWS Grid & Station endpoints for coordinates
-        const pointData = await fetchWithTimeout(`https://weather.gov{LAT},${LON}`);
+        // 1. Get NWS Grid & Station endpoints
+        const pointUrl = "https://weather.gov" + LAT + "," + LON;
+        const pointData = await fetchWithTimeout(pointUrl);
         const forecastUrl = pointData.properties.forecast;
         const stationsUrl = pointData.properties.observationStations;
 
         // 2. Get nearest active weather station observation
         const stationsData = await fetchWithTimeout(stationsUrl);
         const nearestStation = stationsData.features[0].id;
-        const obsData = await fetchWithTimeout(`${nearestStation}/observations/latest`);
+        const obsData = await fetchWithTimeout(nearestStation + "/observations/latest");
         const obs = obsData.properties;
 
         // 3. Get 7-day forecast periods
@@ -128,7 +129,6 @@
 
         errorBox.style.display = "none";
 
-        // Convert Celsius to Fahrenheit if live station temp is available, else use current period
         const tempF = obs.temperature && obs.temperature.value !== null
           ? Math.round((obs.temperature.value * 9) / 5 + 32)
           : periods[0].temperature;
@@ -141,24 +141,25 @@
           ? Math.round(obs.relativeHumidity.value) + "%"
           : "--%";
 
-        document.getElementById("temp").textContent = `${tempF}°`;
+        document.getElementById("temp").textContent = tempF + "°";
         document.getElementById("condition").textContent = obs.textDescription || periods[0].shortForecast;
-        document.getElementById("humidity").textContent = `Humidity ${humidity}`;
-        document.getElementById("wind").textContent = typeof windMph === "number" ? `Wind ${windMph} mph` : `Wind ${windMph}`;
+        document.getElementById("humidity").textContent = "Humidity " + humidity;
+        document.getElementById("wind").textContent = typeof windMph === "number" ? "Wind " + windMph + " mph" : "Wind " + windMph;
 
         // Render next 5 daytime forecast cards
         const forecastEl = document.getElementById("forecast");
         forecastEl.innerHTML = "";
-        const dayPeriods = periods.filter(p => p.isDaytime || p.number === 1).slice(0, 5);
+        const dayPeriods = periods.filter(function(p) {
+          return p.isDaytime || p.number === 1;
+        }).slice(0, 5);
 
-        dayPeriods.forEach(p => {
-          forecastEl.innerHTML += `
-            <div class="day-card">
-              <div class="day-name">${p.name}</div>
-              <div class="day-temps">${p.temperature}°${p.temperatureUnit}</div>
-              <div class="day-desc">${p.shortForecast}</div>
-            </div>
-          `;
+        dayPeriods.forEach(function(p) {
+          forecastEl.innerHTML +=
+            '<div class="day-card">' +
+              '<div class="day-name">' + p.name + '</div>' +
+              '<div class="day-temps">' + p.temperature + '°' + p.temperatureUnit + '</div>' +
+              '<div class="day-desc">' + p.shortForecast + '</div>' +
+            '</div>';
         });
       } catch (err) {
         showError(err.name === "AbortError" ? "Request timed out (network blocked API)" : err.message);

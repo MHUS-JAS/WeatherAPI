@@ -31,7 +31,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      my: auto;
+      margin: auto 0;
     }
     .temp-main { font-size: 18vh; font-weight: 800; line-height: 1; }
     .details { text-align: right; font-size: 3.2vh; color: #cbd5e1; line-height: 1.6; }
@@ -49,20 +49,31 @@
     }
     .day-name { font-size: 2.8vh; font-weight: 600; color: #94a3b8; margin-bottom: 1vh; }
     .day-temps { font-size: 3.6vh; font-weight: 700; }
-    .day-low { color: #64748b; font-weight: 400; margin-left: 0.5vw; }
+    .day-desc { font-size: 2vh; color: #cbd5e1; margin-top: 0.8vh; }
+    #error-box {
+      display: none;
+      background: #7f1d1d;
+      color: #fecaca;
+      padding: 1.5vh 2vw;
+      border-radius: 8px;
+      font-size: 2.2vh;
+      margin-top: 1vh;
+    }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="city" id="city">Local Weather</div>
+    <div class="city" id="city">North Port, FL</div>
     <div class="clock" id="clock">--:--</div>
   </div>
+
+  <div id="error-box"></div>
 
   <div class="current">
     <div class="temp-main" id="temp">--°</div>
     <div class="details">
       <div class="condition" id="condition">Loading...</div>
-      <div id="feels">Feels like --°</div>
+      <div id="humidity">Humidity --%</div>
       <div id="wind">Wind -- mph</div>
     </div>
   </div>
@@ -70,19 +81,17 @@
   <div class="forecast" id="forecast"></div>
 
   <script>
-    // 1. CUSTOMIZE THESE THREE VALUES
     const LAT = 27.0442;
     const LON = -82.2359;
     const CITY_NAME = "North Port, FL";
 
-    document.getElementById("city").textContent = CITY_NAME;
+    const errorBox = document.getElementById("error-box");
+    function showError(msg) {
+      errorBox.style.display = "block";
+      errorBox.textContent = "Debug Info: " + msg;
+    }
 
-    const weatherCodes = {
-      0: "Clear Sky", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Overcast",
-      45: "Fog", 48: "Rime Fog", 51: "Light Drizzle", 53: "Drizzle",
-      61: "Light Rain", 63: "Rain", 65: "Heavy Rain", 71: "Light Snow",
-      80: "Rain Showers", 95: "Thunderstorm"
-    };
+    document.getElementById("city").textContent = CITY_NAME;
 
     function updateClock() {
       const now = new Date();
@@ -91,41 +100,75 @@
       });
     }
 
+    async function fetchWithTimeout(url) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(id);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
     async function fetchWeather() {
-      const url = `https://open-meteo.com{LAT}&longitude=${LON}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
       try {
-        const res = await fetch(url);
-        const data = await res.json();
+        // 1. Get NWS Grid & Station endpoints for coordinates
+        const pointData = await fetchWithTimeout(`https://weather.gov{LAT},${LON}`);
+        const forecastUrl = pointData.properties.forecast;
+        const stationsUrl = pointData.properties.observationStations;
 
-        document.getElementById("temp").textContent = `${Math.round(data.current.temperature_2m)}°`;
-        document.getElementById("condition").textContent = weatherCodes[data.current.weather_code] || "Current Conditions";
-        document.getElementById("feels").textContent = `Feels like ${Math.round(data.current.apparent_temperature)}°`;
-        document.getElementById("wind").textContent = `Wind ${Math.round(data.current.wind_speed_10m)} mph`;
+        // 2. Get nearest active weather station observation
+        const stationsData = await fetchWithTimeout(stationsUrl);
+        const nearestStation = stationsData.features[0].id;
+        const obsData = await fetchWithTimeout(`${nearestStation}/observations/latest`);
+        const obs = obsData.properties;
 
+        // 3. Get 7-day forecast periods
+        const forecastData = await fetchWithTimeout(forecastUrl);
+        const periods = forecastData.properties.periods;
+
+        errorBox.style.display = "none";
+
+        // Convert Celsius to Fahrenheit if live station temp is available, else use current period
+        const tempF = obs.temperature && obs.temperature.value !== null
+          ? Math.round((obs.temperature.value * 9) / 5 + 32)
+          : periods[0].temperature;
+
+        const windMph = obs.windSpeed && obs.windSpeed.value !== null
+          ? Math.round(obs.windSpeed.value * 0.621371)
+          : periods[0].windSpeed;
+
+        const humidity = obs.relativeHumidity && obs.relativeHumidity.value !== null
+          ? Math.round(obs.relativeHumidity.value) + "%"
+          : "--%";
+
+        document.getElementById("temp").textContent = `${tempF}°`;
+        document.getElementById("condition").textContent = obs.textDescription || periods[0].shortForecast;
+        document.getElementById("humidity").textContent = `Humidity ${humidity}`;
+        document.getElementById("wind").textContent = typeof windMph === "number" ? `Wind ${windMph} mph` : `Wind ${windMph}`;
+
+        // Render next 5 daytime forecast cards
         const forecastEl = document.getElementById("forecast");
         forecastEl.innerHTML = "";
-        for (let i = 0; i < 5; i++) {
-          const date = new Date(data.daily.time[i] + "T12:00:00");
-          const day = i === 0 ? "Today" : date.toLocaleDateString([], { weekday: "short" });
-          const hi = Math.round(data.daily.temperature_2m_max[i]);
-          const lo = Math.round(data.daily.temperature_2m_min[i]);
+        const dayPeriods = periods.filter(p => p.isDaytime || p.number === 1).slice(0, 5);
 
+        dayPeriods.forEach(p => {
           forecastEl.innerHTML += `
             <div class="day-card">
-              <div class="day-name">${day}</div>
-              <div class="day-temps">${hi}° <span class="day-low">${lo}°</span></div>
+              <div class="day-name">${p.name}</div>
+              <div class="day-temps">${p.temperature}°${p.temperatureUnit}</div>
+              <div class="day-desc">${p.shortForecast}</div>
             </div>
           `;
-        }
+        });
       } catch (err) {
-        console.error("Weather fetch failed:", err);
+        showError(err.name === "AbortError" ? "Request timed out (network blocked API)" : err.message);
       }
     }
 
     updateClock();
     fetchWeather();
     setInterval(updateClock, 1000);
-    setInterval(fetchWeather, 15 * 60 * 1000); // Refresh weather every 15 minutes
+    setInterval(fetchWeather, 15 * 60 * 1000);
   </script>
 </body>
 </html>

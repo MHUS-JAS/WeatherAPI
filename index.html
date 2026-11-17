@@ -105,44 +105,45 @@
       const id = setTimeout(function() { controller.abort(); }, 10000);
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(id);
-      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (!res.ok) throw new Error("HTTP " + res.status + " on " + url);
       return res.json();
     }
 
     async function fetchWeather() {
       try {
-        // 1. Get NWS Grid & Station endpoints
-        const pointUrl = "https://weather.gov" + LAT + "," + LON;
+        // Build URL safely from segments so copy-paste never strips slashes or subdomains
+        const pointUrl = ["https:", "", "api.weather.gov", "points", LAT + "," + LON].join("/");
         const pointData = await fetchWithTimeout(pointUrl);
         const forecastUrl = pointData.properties.forecast;
         const stationsUrl = pointData.properties.observationStations;
 
-        // 2. Get nearest active weather station observation
+        // Get nearest active weather station observation
         const stationsData = await fetchWithTimeout(stationsUrl);
-        const nearestStation = stationsData.features[0].id;
+        const nearestStation = stationsData.features.at(0).id;
         const obsData = await fetchWithTimeout(nearestStation + "/observations/latest");
         const obs = obsData.properties;
 
-        // 3. Get 7-day forecast periods
+        // Get 7-day forecast periods
         const forecastData = await fetchWithTimeout(forecastUrl);
         const periods = forecastData.properties.periods;
+        const firstPeriod = periods.at(0);
 
         errorBox.style.display = "none";
 
         const tempF = obs.temperature && obs.temperature.value !== null
           ? Math.round((obs.temperature.value * 9) / 5 + 32)
-          : periods[0].temperature;
+          : firstPeriod.temperature;
 
         const windMph = obs.windSpeed && obs.windSpeed.value !== null
           ? Math.round(obs.windSpeed.value * 0.621371)
-          : periods[0].windSpeed;
+          : firstPeriod.windSpeed;
 
         const humidity = obs.relativeHumidity && obs.relativeHumidity.value !== null
           ? Math.round(obs.relativeHumidity.value) + "%"
           : "--%";
 
         document.getElementById("temp").textContent = tempF + "°";
-        document.getElementById("condition").textContent = obs.textDescription || periods[0].shortForecast;
+        document.getElementById("condition").textContent = obs.textDescription || firstPeriod.shortForecast;
         document.getElementById("humidity").textContent = "Humidity " + humidity;
         document.getElementById("wind").textContent = typeof windMph === "number" ? "Wind " + windMph + " mph" : "Wind " + windMph;
 
